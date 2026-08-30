@@ -612,10 +612,36 @@ xla_cc_binary(
             "-Wl,-exported_symbol,_GetPjrtApi",
             "-Wl,-install_name,@rpath/pjrt_c_api_cpu_plugin.dylib",
             "-Wl,-undefined,error",
+            "-llapack",
+            "-lblas",
         ],
         [
             "-Wl,--version-script,$(location :pjrt_c_api_cpu_version_script.lds)",
             "-Wl,--no-undefined",
+            # Debian and Ubuntu split LAPACK and BLAS into their own
+            # multiarch subdirectories, which are not on the default search
+            # path. These directories hold nothing else, which is what makes
+            # them safe to add.
+            #
+            # Do NOT add a general system library directory here -- not
+            # /usr/lib, not /usr/lib64 -- however tempting it is on a
+            # distribution that keeps LAPACK there. A -L applies to every -l
+            # on the link line, including the implicit libc, libm, libdl,
+            # libpthread and librt, and it is searched before the toolchain's
+            # hermetic sysroot. Adding /usr/lib was measured to relink the
+            # whole C runtime against the build host's glibc: the resulting
+            # plugin needed GLIBC_2.44 instead of GLIBC_2.27 and lost its
+            # librt/libdl/libpthread DT_NEEDED entries, which makes it
+            # unusable on any older distribution. On a host whose LAPACK is
+            # not in a multiarch directory, pass the path for that build only:
+            #   tools/build_plugin.sh --arch-flags "--linkopt=-L/usr/lib"
+            # and do not publish the result. See docs/developer/xla-fork.md.
+            "-L/usr/lib/aarch64-linux-gnu/lapack",
+            "-L/usr/lib/aarch64-linux-gnu/blas",
+            "-L/usr/lib/x86_64-linux-gnu/lapack",
+            "-L/usr/lib/x86_64-linux-gnu/blas",
+            "-llapack",
+            "-lblas",
         ],
     ),
     linkshared = True,
@@ -627,6 +653,10 @@ xla_cc_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":pjrt_c_api_cpu",
+        # so that JAX-generated HLO relying on LAPACK (e.g. `jnp.linalg.inv`)
+        # can execute against this standalone plugin; see
+        # //jaxlib_cpu_kernels:BUILD
+        "//jaxlib_cpu_kernels:cpu_kernels",
     ],
 )
 
