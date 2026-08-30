@@ -398,10 +398,18 @@ xla_cc_binary(
             "-Wl,-exported_symbol,_GetPjrtApi",
             "-Wl,-install_name,@rpath/pjrt_c_api_cpu_plugin.dylib",
             "-Wl,-undefined,error",
+            "-llapack",
+            "-lblas",
         ],
         [
             "-Wl,--version-script,$(location :pjrt_c_api_cpu_version_script.lds)",
             "-Wl,--no-undefined",
+            "-L/usr/lib/aarch64-linux-gnu/lapack",
+            "-L/usr/lib/aarch64-linux-gnu/blas",
+            "-L/usr/lib/x86_64-linux-gnu/lapack",
+            "-L/usr/lib/x86_64-linux-gnu/blas",
+            "-llapack",
+            "-lblas",
         ],
     ),
     linkshared = True,
@@ -413,6 +421,10 @@ xla_cc_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":pjrt_c_api_cpu",
+        # so that JAX-generated HLO relying on LAPACK (e.g. `jnp.linalg.inv`)
+        # can execute against this standalone plugin; see
+        # //jaxlib_cpu_kernels:BUILD
+        "//jaxlib_cpu_kernels:cpu_kernels",
     ],
 )
 
