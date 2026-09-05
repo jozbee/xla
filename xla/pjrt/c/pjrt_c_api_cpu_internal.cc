@@ -16,9 +16,11 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_cpu_internal.h"
 
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
@@ -63,6 +65,8 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
             {"cpu_device_count", PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
             {"asynchronous", PJRT_NamedValue_Type::PJRT_NamedValue_kBool},
             {"process_id", PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
+            {"max_inflight_computations",
+             PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
         });
     PJRT_RETURN_IF_ERROR(
         ValidateCreateOptions(create_options, kExpectedOptionNameAndTypes));
@@ -87,6 +91,14 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
       options.process_id = process_id_option;
       LOG(INFO) << "process_id set via create_options: " << process_id_option;
     }
+    if (auto it = create_options.find("max_inflight_computations");
+        it != create_options.end()) {
+      int64_t max_inflight_option = std::get<int64_t>(it->second);
+      options.max_inflight_computations_per_device =
+          static_cast<int>(max_inflight_option);
+      LOG(INFO) << "max_inflight_computations set via create_options: "
+                << max_inflight_option;
+    }
   }
 
   PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtClient> client,
@@ -108,6 +120,53 @@ PJRT_Error* PJRT_CpuDeviceTopology_Create(
     PJRT_TopologyDescription_Create_Args* args) {
   return StatusToPjRtError(
       absl::UnimplementedError("Topology not supported for CPU compilation."));
+}
+
+// Advertises what this build of the CPU plugin accepts, so a caller can tell a
+// patched plugin from a stock one before it creates a client.
+//
+// This matters because the create-option surface is not discoverable
+// otherwise. Since ValidateCreateOptions() above rejects unknown option names
+// outright, a caller cannot simply pass an option and see whether it sticks:
+// passing one this plugin does not know fails client creation. The markers
+// below let a caller ask first and only send what will be accepted.
+//
+// `supports_synchronous_execution` reports that `asynchronous=false` is
+// available, which makes XLA run computations inline on the calling thread
+// instead of handing them to its dispatch pool. That is the single biggest
+// structural cut to tail latency for a real-time caller, and the PJRT C API
+// exposes no other route to it: PJRT_ExecuteOptions has no execution-mode
+// field.
+PJRT_Error* PJRT_Plugin_Attributes_Cpu(PJRT_Plugin_Attributes_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Plugin_Attributes_Args", PJRT_Plugin_Attributes_Args_STRUCT_SIZE,
+      args->struct_size));
+
+  static const std::vector<PJRT_NamedValue>* const attributes = [] {
+    auto* values =
+        new std::vector<PJRT_NamedValue>(pjrt::GetXlaPluginCAttributes());
+    auto add_marker = [values](const char* name, int64_t value) {
+      // `name` is always a string literal here, so the pointer stays valid for
+      // the process lifetime, which is what the C API requires of attributes.
+      PJRT_NamedValue nv;
+      nv.struct_size = PJRT_NamedValue_STRUCT_SIZE;
+      nv.extension_start = nullptr;
+      nv.name = name;
+      nv.name_size = std::strlen(name);
+      nv.type = PJRT_NamedValue_Type::PJRT_NamedValue_kInt64;
+      nv.int64_value = value;
+      nv.value_size = 1;
+      values->push_back(nv);
+    };
+    add_marker("supports_synchronous_execution", 1);
+    add_marker("supports_max_inflight_computations", 1);
+    add_marker("cjfc_plugin_patch_level", 2);
+    return values;
+  }();
+
+  args->num_attributes = attributes->size();
+  args->attributes = attributes->data();
+  return nullptr;
 }
 
 const PJRT_Api* GetCpuPjrtApi() {
@@ -136,7 +195,7 @@ const PJRT_Api* GetCpuPjrtApi() {
       pjrt::cpu_plugin::PJRT_ExecuteContext_Create,
       pjrt::cpu_plugin::PJRT_CpuDeviceTopology_Create,
       pjrt::PJRT_Plugin_Initialize_NoOp, &xla_transform_extension.base,
-      pjrt::PJRT_Plugin_Attributes_Xla);
+      pjrt::cpu_plugin::PJRT_Plugin_Attributes_Cpu);
 
   return &pjrt_api;
 }
