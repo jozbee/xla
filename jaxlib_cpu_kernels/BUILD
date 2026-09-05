@@ -29,16 +29,30 @@ cc_library(
     name = "lapack_kernels",
     srcs = ["lapack_kernels.cc"],
     hdrs = ["lapack_kernels.h"],
-    copts = ["-fexceptions"],
+    # -fexceptions matches jaxlib's own build of these sources.
+    # -Wno-c++20-extensions is needed because XLA compiles with -Werror while
+    # jaxlib does not, and lapack_kernels.cc captures structured bindings in
+    # lambdas -- a C++20 feature that clang accepts as an extension under the
+    # -std=c++17 both projects use. Suppressing the warning reproduces jaxlib's
+    # effective behaviour without changing the language standard.
+    copts = [
+        "-fexceptions",
+        "-Wno-c++20-extensions",
+    ],
     features = ["-use_header_modules"],
     deps = [
         ":ffi_helpers",
         "//xla/ffi/api:c_api",
         "//xla/ffi/api:ffi",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform",
     ],
 )
 

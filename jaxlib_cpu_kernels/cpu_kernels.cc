@@ -13,11 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// Vendored from jaxlib/cpu/cpu_kernels.cc (jax-v0.9.0.1), trimmed to the
-// LAPACK-backed FFI handlers only (dropping the sparse/Eigen kernels, which
-// call_jax_from_cpp does not use), so that JAX-generated HLO that relies on
-// LAPACK (e.g. `jnp.linalg.inv`) can run against our standalone PJRT CPU
-// plugin instead of only from a Python process with jaxlib/Scipy imported.
+// This file is not used by JAX itself, but exists to assist with running
+// JAX-generated HLO code from outside of JAX.
+//
+// Vendored by call_jax_from_cpp from jax-ml/jax @ jax-v0.11.1 and trimmed:
+// the sparse (cpu_csr_sparse_dense_ffi) and tridiagonal
+// (tridiagonal_solve_perturbed_ffi) handlers are dropped, because their
+// kernels are not vendored here. An executable that lowers to either one
+// fails to load with "No FFI handler registered for <name> on a platform
+// Host"; vendor jaxlib/cpu/{sparse,tridiagonal_solve}_kernels.* if you need
+// them.
 
 #include "jaxlib_cpu_kernels/lapack_kernels.h"
 #include "xla/ffi/api/c_api.h"
@@ -85,6 +90,8 @@ JAX_CPU_REGISTER_HANDLER(lapack_sgtsv_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_dgtsv_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_cgtsv_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_zgtsv_ffi);
+
+
 
 #undef JAX_CPU_REGISTER_HANDLER
 
