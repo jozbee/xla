@@ -561,11 +561,36 @@ cc_library(
 )
 
 cc_library(
+    name = "pjrt_c_api_cpu_pool_allocator",
+    srcs = ["pjrt_c_api_cpu_pool_allocator.cc"],
+    hdrs = ["pjrt_c_api_cpu_pool_allocator.h"],
+    deps = [
+        "//xla/pjrt/plugin/xla_cpu:cpu_memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_c_api_cpu_pool_allocator_test",
+    srcs = ["pjrt_c_api_cpu_pool_allocator_test.cc"],
+    deps = [
+        ":pjrt_c_api_cpu_pool_allocator",
+        "//xla/pjrt/plugin/xla_cpu:cpu_memory",
+        "@com_google_absl//absl/base:config",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "pjrt_c_api_cpu_internal",
     srcs = ["pjrt_c_api_cpu_internal.cc"],
     hdrs = ["pjrt_c_api_cpu_internal.h"],
     visibility = ["//visibility:public"],
     deps = [
+        ":pjrt_c_api_cpu_pool_allocator",
         ":pjrt_c_api_ffi_extension_hdrs",
         ":pjrt_c_api_ffi_internal",
         ":pjrt_c_api_hdrs",

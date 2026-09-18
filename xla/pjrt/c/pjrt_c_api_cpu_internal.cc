@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/c/pjrt_c_api_cpu_pool_allocator.h"
 #include "xla/pjrt/c/pjrt_c_api_ffi_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_ffi_internal.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
@@ -66,6 +67,7 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
             {"asynchronous", PJRT_NamedValue_Type::PJRT_NamedValue_kBool},
             {"max_inflight_computations",
              PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
+            {"pooling_allocator", PJRT_NamedValue_Type::PJRT_NamedValue_kBool},
         });
     PJRT_RETURN_IF_ERROR(
         ValidateCreateOptions(create_options, kExpectedOptionNameAndTypes));
@@ -91,6 +93,27 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
           static_cast<int>(max_inflight_option);
       LOG(INFO) << "max_inflight_computations set via create_options: "
                 << max_inflight_option;
+    }
+    if (auto it = create_options.find("pooling_allocator");
+        it != create_options.end()) {
+      bool pooling_allocator_option = std::get<bool>(it->second);
+      if (pooling_allocator_option) {
+        options.allocator = MakePoolingAllocator();
+        if (options.asynchronous) {
+          // A block only removes an allocation when it is released on the
+          // thread that acquired it. Asynchronous dispatch allocates this
+          // execution's buffers on an async-work-runner thread and frees the
+          // outputs on the caller's, so those never pool. Warned about rather
+          // than refused, because `asynchronous` is advisory: XLA runs a cheap
+          // computation inline whatever it says.
+          LOG(WARNING) << "pooling_allocator is on while asynchronous dispatch "
+                          "is enabled. Buffers acquired and released on "
+                          "different threads do not pool; set asynchronous to "
+                          "false for the pool to take effect.";
+        }
+      }
+      LOG(INFO) << "pooling_allocator set via create_options: "
+                << pooling_allocator_option;
     }
   }
 
@@ -130,6 +153,27 @@ PJRT_Error* PJRT_CpuDeviceTopology_Create(
 // structural cut to tail latency for a real-time caller, and the PJRT C API
 // exposes no other route to it: PJRT_ExecuteOptions has no execution-mode
 // field.
+//
+// `supports_pooling_allocator` reports that `pooling_allocator=true` is
+// available. It installs a thread-local block pool behind
+// `CpuClientOptions::allocator`, which every output and temporary buffer of
+// every execution is allocated through, so a caller that runs the same
+// executable at a fixed period stops asking the system allocator for the same
+// sizes forever. What it reaches is narrow and worth stating exactly: it
+// removes the plugin's per-call posix_memalign calls and the wrapper object
+// beside each one. It does not reach the thousands of small allocations XLA's
+// thunk runtime makes per call -- AsyncValue objects, task closures, Eigen
+// scratch -- which go straight to ::operator new and are not reachable through
+// this option at all. It is off by default, so a caller that does not ask for
+// it gets stock behaviour and an A/B comparison is one create option apart on
+// one binary.
+//
+// It belongs with `asynchronous=false`. The free lists are per-thread and take
+// no lock, so a buffer stops costing an allocation only when the thread that
+// acquires it is the thread that frees it, and asynchronous dispatch allocates
+// the output buffers on a work-runner thread and frees them on the caller's.
+// Client creation says so in a warning rather than refusing the combination,
+// because XLA runs a cheap computation inline whatever the option says.
 PJRT_Error* PJRT_Plugin_Attributes_Cpu(PJRT_Plugin_Attributes_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Plugin_Attributes_Args", PJRT_Plugin_Attributes_Args_STRUCT_SIZE,
@@ -153,7 +197,8 @@ PJRT_Error* PJRT_Plugin_Attributes_Cpu(PJRT_Plugin_Attributes_Args* args) {
     };
     add_marker("supports_synchronous_execution", 1);
     add_marker("supports_max_inflight_computations", 1);
-    add_marker("cjfc_plugin_patch_level", 2);
+    add_marker("supports_pooling_allocator", 1);
+    add_marker("cjfc_plugin_patch_level", 3);
     return values;
   }();
 
