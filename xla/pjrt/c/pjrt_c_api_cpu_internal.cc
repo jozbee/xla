@@ -130,6 +130,14 @@ PJRT_Error* PJRT_CpuDeviceTopology_Create(
 // structural cut to tail latency for a real-time caller, and the PJRT C API
 // exposes no other route to it: PJRT_ExecuteOptions has no execution-mode
 // field.
+//
+// `cjfc_plugin_patch_level` counts the fork's behavioural patches, so a
+// caller can tell which build it has. Level 3 adds the two that need no
+// option: with an intra-op pool of one thread the whole computation runs on
+// the calling thread (upstream handed it to the pool's worker and waited),
+// and the per-call allocations for constants and kernel arguments are gone.
+// A caller can verify the first from the scheduler's own accounting rather
+// than trust the marker; the marker exists so it knows to look.
 PJRT_Error* PJRT_Plugin_Attributes_Cpu(PJRT_Plugin_Attributes_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Plugin_Attributes_Args", PJRT_Plugin_Attributes_Args_STRUCT_SIZE,
@@ -153,7 +161,7 @@ PJRT_Error* PJRT_Plugin_Attributes_Cpu(PJRT_Plugin_Attributes_Args* args) {
     };
     add_marker("supports_synchronous_execution", 1);
     add_marker("supports_max_inflight_computations", 1);
-    add_marker("cjfc_plugin_patch_level", 2);
+    add_marker("cjfc_plugin_patch_level", 3);
     return values;
   }();
 
