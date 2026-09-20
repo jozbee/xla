@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/memory/memory.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
@@ -206,6 +207,14 @@ tsl::AsyncValueRef<OneDnnFusionThunk::ExecuteEvent> OneDnnFusionThunk::Execute(
                                   results_buffers[i].opaque());
   }
 
+  // oneDNN runs on the intra-op pool and has no inline path; a one-thread
+  // client passes no pool at all.
+  if (params.intra_op_threadpool == nullptr) {
+    return absl::FailedPreconditionError(
+        "oneDNN fusion thunk needs an intra-op thread pool of more than one "
+        "thread; recompile without xla_cpu_use_onednn or run with more "
+        "threads");
+  }
   Eigen::ThreadPoolInterface* thread_pool =
       params.intra_op_threadpool->getPool();
 

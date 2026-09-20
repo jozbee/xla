@@ -166,6 +166,14 @@ OneDnnOpThunk::BufferUses OneDnnOpThunk::buffer_uses() const {
 
 tsl::AsyncValueRef<OneDnnOpThunk::ExecuteEvent> OneDnnOpThunk::Execute(
     const ExecuteParams& params) {
+  // oneDNN runs on the intra-op pool and has no inline path; a one-thread
+  // client passes no pool at all.
+  if (params.intra_op_threadpool == nullptr) {
+    return absl::FailedPreconditionError(
+        "oneDNN op thunk needs an intra-op thread pool of more than one "
+        "thread; recompile without xla_cpu_use_onednn or run with more "
+        "threads");
+  }
   Eigen::ThreadPoolInterface* thread_pool =
       params.intra_op_threadpool->getPool();
   DCHECK(thread_pool != nullptr) << "Thread pool must not be null";
