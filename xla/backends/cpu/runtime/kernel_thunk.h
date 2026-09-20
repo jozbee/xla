@@ -127,9 +127,11 @@ class KernelThunk : public KernelThunkBase {
       std::conditional_t<IsDynamic(num_results), std::vector<ShapedSlice>,
                          std::array<ShapedSlice, Size(num_results)>>;
 
+  // The generic thunk copies its arguments on every execute; 32 keeps the
+  // copy on the stack for the multi-result fusions that reach it.
   using KernelArgs = std::conditional_t<
       IsDynamic(num_arguments) || IsDynamic(num_results),
-      absl::InlinedVector<XLA_CPU_KernelArg, 4>,
+      absl::InlinedVector<XLA_CPU_KernelArg, 32>,
       std::array<XLA_CPU_KernelArg, Size(num_arguments + num_results)>>;
 
   KernelThunk(Info info, absl::Span<const ShapedSlice> arguments_buffers,

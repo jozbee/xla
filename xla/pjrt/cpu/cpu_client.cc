@@ -1298,6 +1298,25 @@ PjRtCpuExecutable::PjRtCpuExecutable(
     output_indices_[result_buffer_indices_[i]] = i;
   }
 
+  constant_memory_.resize(output_indices_.size());
+  absl::Span<const cpu::ConstantAllocation> constants =
+      cpu_executable_->constants();
+  for (BufferAllocation::Index i = 0; i < constant_memory_.size(); ++i) {
+    const BufferAllocation& allocation =
+        cpu_executable_->buffer_assignment().GetAllocation(i);
+    if (allocation.is_entry_computation_parameter()) {
+      continue;
+    }
+    if (allocation.is_constant() && allocation.index() < constants.size()) {
+      se::DeviceAddressBase constant =
+          constants[allocation.index()].AsDeviceAddress();
+      constant_memory_[i] = CpuDeviceMemory::CreateConstantMemory(
+          constant.opaque(), constant.size());
+    } else if (allocation.is_constant() || allocation.is_thread_local()) {
+      constant_memory_[i] = CpuDeviceMemory::CreateConstantMemory(nullptr, 0);
+    }
+  }
+
   // Ensure output_memory_space_kind_ids_ is at least as large as the number of
   // output leaves. Must be done before the early return for parameterless
   // computations (e.g. iota).
@@ -1430,7 +1449,7 @@ struct BufferAllocAndCopy {
 // and assemble the buffer pointers in order to call into CpuExecutable.
 static absl::StatusOr<tsl::AsyncValueRef<CpuDeviceMemory>> MemoryForAllocation(
     const BufferAllocation& allocation,
-    absl::Span<const cpu::ConstantAllocation> constants,
+    const tsl::AsyncValueRef<CpuDeviceMemory>& constant_memory,
     absl::Span<const PjRtRawBufferRef> input_buffers, BufferAlloc& buffer_alloc,
     BufferAllocAndCopy& buffer_alloc_and_copy,
     const tsl::AsyncValueRef<CpuDeviceMemory>& tuple_index_table,
@@ -1476,14 +1495,8 @@ static absl::StatusOr<tsl::AsyncValueRef<CpuDeviceMemory>> MemoryForAllocation(
       return allocated_output->down_cast<CpuRawBuffer>()->buffer();
     }
     return arg->buffer();
-  } else if (allocation.is_constant() &&
-             allocation.index() < constants.size()) {
-    se::DeviceAddressBase constant =
-        constants[allocation.index()].AsDeviceAddress();
-    return CpuDeviceMemory::CreateConstantMemory(constant.opaque(),
-                                                 constant.size());
-  } else if (allocation.is_constant() || allocation.is_thread_local()) {
-    return CpuDeviceMemory::CreateConstantMemory(nullptr, 0);
+  } else if (constant_memory) {
+    return constant_memory;
   }
 
   // Output and temporary buffer.
@@ -1497,7 +1510,8 @@ static absl::StatusOr<tsl::AsyncValueRef<CpuDeviceMemory>> MemoryForAllocation(
 
 static absl::StatusOr<std::vector<tsl::AsyncValueRef<CpuDeviceMemory>>>
 CreateBufferTable(const BufferAssignment& assignment,
-                  absl::Span<const cpu::ConstantAllocation> constants,
+                  absl::Span<const tsl::AsyncValueRef<CpuDeviceMemory>>
+                      constant_memory,
                   absl::Span<const PjRtRawBufferRef> input_buffers,
                   BufferAlloc& buffer_alloc,
                   BufferAllocAndCopy& buffer_alloc_and_copy,
@@ -1513,7 +1527,7 @@ CreateBufferTable(const BufferAssignment& assignment,
     ASSIGN_OR_RETURN(
         buffer_table[i],
         MemoryForAllocation(
-            allocation, constants, input_buffers, buffer_alloc,
+            allocation, constant_memory[i], input_buffers, buffer_alloc,
             buffer_alloc_and_copy, tuple_index_table,
             out_index != -1 ? output_buffers[out_index] : null_output));
   }
@@ -1637,7 +1651,7 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
 
   absl::StatusOr<std::vector<tsl::AsyncValueRef<CpuDeviceMemory>>>
       buffer_table = CreateBufferTable(
-          cpu_executable->buffer_assignment(), cpu_executable->constants(),
+          cpu_executable->buffer_assignment(), executable_->constant_memory_,
           input_buffers, buffer_alloc, buffer_alloc_and_copy, tuple_index_table,
           output_leaf_buffers, executable_->output_indices_);
 

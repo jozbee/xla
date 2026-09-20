@@ -474,6 +474,12 @@ class PjRtCpuExecutable final : public PjRtExecutable {
   // Reverse mapping of result_buffer_indices_.
   std::vector<int64_t> output_indices_;
 
+  // One entry per buffer allocation: the constant or thread-local memory
+  // that allocation refers to, or a null ref for the ones that are not.
+  // Built once, since a constant's address never changes while the
+  // executable is loaded, and shared by every execution.
+  std::vector<tsl::AsyncValueRef<CpuDeviceMemory>> constant_memory_;
+
   // Size on device of each leaf buffer of the compiled program, cached here
   // for performance reasons.
   std::vector<int64_t> input_buffer_sizes_in_bytes_;
