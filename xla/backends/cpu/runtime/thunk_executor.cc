@@ -261,7 +261,12 @@ tsl::AsyncValueRef<ThunkExecutor::ExecuteEvent> ThunkExecutor::Execute(
   // a cost model to make the decision), we skip expensive async execution and
   // simply run thunks one by one. This minimizes runtime overheads from small
   // XLA programs with many cheap operations.
-  if (is_sequential_) {
+  //
+  // Without a task runner the concurrent path has nobody to hand work to: it
+  // would walk the DAG on this thread with the allocations and atomics of a
+  // parallel execution. The thunk sequence is a topological order of that
+  // DAG by construction, so running it in order is always valid.
+  if (is_sequential_ || params.task_runner == nullptr) {
     return ExecuteSequential(params);
   }
 

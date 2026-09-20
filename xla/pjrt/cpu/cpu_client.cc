@@ -1766,15 +1766,24 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
       ASSIGN_OR_RETURN(ynn_params, cpu::Thunk::YnnParams::Create(&run_options));
     }
 
+    // A pool of one thread cannot run anything beside the caller; it can only
+    // run it instead of the caller, which moves the whole computation onto a
+    // thread the client does not control and leaves the caller waiting.
+    // Without a pool and a task runner every thunk executes inline, and the
+    // thunk executor takes its sequential path.
+    const Eigen::ThreadPoolDevice* intra_op_thread_pool =
+        run_options.intra_op_thread_pool();
+    const bool single_threaded = intra_op_thread_pool == nullptr ||
+                                 intra_op_thread_pool->numThreads() <= 1;
     cpu::ThreadPoolTaskRunner task_runner(
-        run_options.intra_op_thread_pool()->getPool());
+        single_threaded ? nullptr : intra_op_thread_pool->getPool());
 
     cpu::Thunk::ExecuteParams execute_params = {
         cpu_executable->function_library(),
         &allocations,
         cpu::GetXfeedManager(run_options.device_ordinal()),
-        run_options.intra_op_thread_pool(),
-        &task_runner,
+        single_threaded ? nullptr : intra_op_thread_pool,
+        single_threaded ? nullptr : &task_runner,
         &collective_params,
         &custom_call_execute_params,
         ynn_params ? &*ynn_params : nullptr,
